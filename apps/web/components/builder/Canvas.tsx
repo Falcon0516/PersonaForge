@@ -20,6 +20,7 @@ import {
   Layers,
   AlertTriangle,
   BookOpen,
+  Wrench,
 } from "lucide-react";
 import { getBlock, Conflict, BlockDef } from "@personaforge/core";
 import { CanvasBlockCard } from "./CanvasBlockCard";
@@ -112,16 +113,32 @@ export function Canvas({
 
       {/* Active Conflicts Summary Alert */}
       {conflicts.length > 0 && (
-        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs text-amber-200">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
-            <span>
-              <strong>{conflicts.length} conflicting blocks detected.</strong> Resolve or click 1-Click Fix below to align instructions.
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between text-xs text-amber-200 gap-3 shadow-lg shadow-amber-500/5">
+          <div className="flex items-start sm:items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5 sm:mt-0" />
+            <div className="space-y-0.5">
+              <span className="font-bold text-amber-300">
+                {conflicts.length} conflicting block{conflicts.length > 1 ? "s" : ""} detected:
+              </span>{" "}
+              <span className="text-amber-200/90">{conflicts[0]?.message}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-center">
+            {conflicts[0]?.fix && onApplyFix && (
+              <button
+                type="button"
+                onClick={() => onApplyFix(conflicts[0])}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shadow-md transition cursor-pointer"
+                title="Automatically reconcile instructions"
+              >
+                <Wrench className="w-3.5 h-3.5" />
+                1-Click Fix
+              </button>
+            )}
+            <span className="text-[11px] font-mono text-amber-400 font-semibold px-2 py-1 rounded bg-amber-500/20">
+              Audit Warning
             </span>
           </div>
-          <span className="text-[11px] font-mono text-amber-400 font-semibold px-2 py-0.5 rounded bg-amber-500/20">
-            Audit Warning
-          </span>
         </div>
       )}
 
