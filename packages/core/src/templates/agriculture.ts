@@ -65,8 +65,8 @@ export const agricultureTemplate: TemplatePreset = {
       "channel.image_understanding": true,
     },
     runtime: {
-      model: "llama-3.1-8b-instant",
-      fallbackModels: ["llama-3.1-8b-instant"],
+      model: "qwen/qwen3.8-27b",
+      fallbackModels: ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"],
       temperature: 0.5,
       maxTokens: 600,
       memory: "session",

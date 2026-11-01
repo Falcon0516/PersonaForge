@@ -25,9 +25,18 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-GROQ_LLM_MODEL = os.getenv("GROQ_DEFAULT_MODEL", "llama-3.1-8b-instant")
+GROQ_LLM_MODEL = os.getenv("GROQ_DEFAULT_MODEL", "qwen/qwen3.8-27b")
 GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
 GROQ_VISION_FALLBACK = "llama-3.2-11b-vision-preview"
+
+GROQ_CANDIDATE_MODELS = [
+    os.getenv("GROQ_DEFAULT_MODEL", "qwen/qwen3.8-27b"),
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+]
 
 SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
 SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
@@ -72,14 +81,17 @@ CRITICAL RULES:
 # Internal helpers
 # ---------------------------------------------------------------------------
 def _get_groq_client() -> Groq:
-    api_key = os.getenv("GROQ_API_KEY")
+    """Fetch Groq client supporting either GROQ_API_KEY or GROQ_API_KEYS (comma-separated)."""
+    raw_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_API_KEYS", "")
+    api_key = raw_key.split(",")[0].strip() if raw_key else ""
     if not api_key:
-        raise RuntimeError("GROQ_API_KEY environment variable is not set")
+        raise RuntimeError("Neither GROQ_API_KEY nor GROQ_API_KEYS environment variable is set")
     return Groq(api_key=api_key)
 
 
 def _get_sarvam_headers() -> dict:
-    api_key = os.getenv("SARVAM_API_KEY")
+    raw_key = os.getenv("SARVAM_API_KEY") or os.getenv("SARVAM_API_KEYS", "")
+    api_key = raw_key.split(",")[0].strip() if raw_key else ""
     if not api_key:
         raise RuntimeError("SARVAM_API_KEY environment variable is not set")
     return {"API-Subscription-Key": api_key}
@@ -101,65 +113,92 @@ def build_system_prompt(language: str, extra_context: str = "") -> str:
 # Language detection
 # ---------------------------------------------------------------------------
 def detect_language(text: str) -> str:
-    """Detect whether *text* is English, Hindi, or Kannada via Groq.
-    Returns 'en', 'hi', or 'kn'. Falls back to 'en'."""
+    """Detect whether *text* is English, Hindi, or Kannada with auto-fallback."""
     if not text or not text.strip():
         return "en"
-    try:
-        client = _get_groq_client()
-        resp = client.chat.completions.create(
-            model=GROQ_LLM_MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a language identification tool. "
-                        "Identify the language of the following text. "
-                        "Return ONLY one word: 'en' for English, 'hi' for Hindi, "
-                        "'kn' for Kannada. Do not return anything else."
-                    ),
-                },
-                {"role": "user", "content": text},
-            ],
-            max_tokens=5,
-            temperature=0,
-        )
-        detected = resp.choices[0].message.content.strip().lower()
-        if detected in ("en", "hi", "kn"):
-            logger.info("Detected language: %s", detected)
-            return detected
-        logger.warning("Unexpected detection result '%s', defaulting to 'en'", detected)
-        return "en"
-    except Exception:
-        logger.exception("Language detection failed, defaulting to 'en'")
-        return "en"
+
+    # Fast script heuristics
+    if any("\u0900" <= ch <= "\u097f" for ch in text):
+        return "hi"
+    if any("\u0c80" <= ch <= "\u0cff" for ch in text):
+        return "kn"
+
+    # Deduplicated list of models to try
+    seen = set()
+    models = [m for m in GROQ_CANDIDATE_MODELS if m and not (m in seen or seen.add(m))]
+
+    for model_name in models:
+        try:
+            client = _get_groq_client()
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a language identification tool. "
+                            "Identify the language of the following text. "
+                            "Return ONLY one word: 'en' for English, 'hi' for Hindi, "
+                            "'kn' for Kannada. Do not return anything else."
+                        ),
+                    },
+                    {"role": "user", "content": text},
+                ],
+                max_tokens=5,
+                temperature=0,
+            )
+            detected = resp.choices[0].message.content.strip().lower()
+            if detected in ("en", "hi", "kn"):
+                logger.info("Detected language '%s' using %s", detected, model_name)
+                return detected
+        except Exception as e:
+            logger.warning("Language detection failed on %s: %s", model_name, e)
+
+    return "en"
 
 
 # ---------------------------------------------------------------------------
 # LLM chat completion
 # ---------------------------------------------------------------------------
 def get_llm_response(history: list[dict], system_prompt: str, language: str) -> str:
-    """Generate a chat response using Groq LLM with full conversation history."""
+    """Generate a chat response using Groq LLM with full conversation history and multi-model fallback."""
+    seen = set()
+    models = [m for m in GROQ_CANDIDATE_MODELS if m and not (m in seen or seen.add(m))]
+
     try:
         client = _get_groq_client()
-        messages = [{"role": "system", "content": system_prompt}] + history
-        resp = client.chat.completions.create(
-            model=GROQ_LLM_MODEL,
-            messages=messages,
-            max_tokens=500,
-            temperature=0.7,
-        )
-        reply = resp.choices[0].message.content.strip()
-        logger.info("LLM response generated (%d chars)", len(reply))
-        return reply
-    except Exception:
-        logger.exception("Groq LLM call failed")
+    except Exception as e:
+        logger.exception("Failed to initialize Groq client: %s", e)
         fallback = {
             "en": "I'm sorry, I'm having trouble right now. Please try again shortly.",
             "hi": "क्षमा करें, अभी कठिनाई हो रही है। कृपया कुछ समय बाद पुनः प्रयास करें।",
             "kn": "ಕ್ಷಮಿಸಿ, ಈಗ ಕಷ್ಟವಾಗುತ್ತಿದೆ. ದಯವಿಟ್ಟು ಸ್ವಲ್ಪ ಸಮಯದ ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
         }
         return fallback.get(language, fallback["en"])
+
+    messages = [{"role": "system", "content": system_prompt}] + history
+
+    for model_name in models:
+        try:
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=500,
+                temperature=0.7,
+            )
+            reply = resp.choices[0].message.content.strip()
+            logger.info("LLM response generated with model %s (%d chars)", model_name, len(reply))
+            return reply
+        except Exception as e:
+            logger.warning("Groq call failed with model %s: %s. Trying fallback model...", model_name, e)
+
+    logger.exception("All Groq models failed in get_llm_response")
+    fallback = {
+        "en": "I'm sorry, I'm having trouble right now. Please try again shortly.",
+        "hi": "क्षमा करें, अभी कठिनाई हो रही है। कृपया कुछ समय बाद पुनः प्रयास करें।",
+        "kn": "ಕ್ಷಮಿಸಿ, ಈಗ ಕಷ್ಟವಾಗುತ್ತಿದೆ. ದಯವಿಟ್ಟು ಸ್ವಲ್ಪ ಸಮಯದ ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
+    }
+    return fallback.get(language, fallback["en"])
 
 
 # ---------------------------------------------------------------------------
