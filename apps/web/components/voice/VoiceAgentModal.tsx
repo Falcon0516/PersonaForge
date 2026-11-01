@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   Mic,
   MicOff,
@@ -34,16 +34,7 @@ export function VoiceAgentModal({ isOpen, onClose, config }: VoiceAgentModalProp
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
-  // Stop audio on unmount or close
-  useEffect(() => {
-    return () => {
-      stopAllAudio();
-    };
-  }, []);
-
-  if (!isOpen) return null;
-
-  const stopAllAudio = () => {
+  const stopAllAudio = useCallback(() => {
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
@@ -53,7 +44,14 @@ export function VoiceAgentModal({ isOpen, onClose, config }: VoiceAgentModalProp
     if (orbState === "speaking") {
       setOrbState("idle");
     }
-  };
+  }, [orbState]);
+
+  // Stop audio on unmount or close
+  useEffect(() => {
+    return () => {
+      stopAllAudio();
+    };
+  }, [stopAllAudio]);
 
   const playNextInQueue = () => {
     if (audioQueueRef.current.length === 0) {
@@ -240,6 +238,8 @@ export function VoiceAgentModal({ isOpen, onClose, config }: VoiceAgentModalProp
       // Audio queue error handling
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">

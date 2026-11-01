@@ -67,7 +67,7 @@ export default function HostedBotPage() {
       id: "initial",
       role: "assistant",
       content: greeting,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestamp: "Just now",
     },
   ]);
   const [input, setInput] = useState("");
@@ -379,11 +379,13 @@ export default function HostedBotPage() {
       </div>
 
       {/* Voice Agent Live Interactive Modal */}
-      <VoiceAgentModal
-        isOpen={isVoiceModalOpen}
-        onClose={() => setIsVoiceModalOpen(false)}
-        config={config}
-      />
+      {isVoiceModalOpen && (
+        <VoiceAgentModal
+          isOpen={isVoiceModalOpen}
+          onClose={() => setIsVoiceModalOpen(false)}
+          config={config}
+        />
+      )}
     </div>
   );
 }

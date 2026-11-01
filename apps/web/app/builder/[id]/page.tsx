@@ -22,31 +22,41 @@ import { VersionDrawer } from "@/components/builder/VersionDrawer";
 import { CommandPalette } from "@/components/builder/CommandPalette";
 import { PublishModal } from "@/components/builder/PublishModal";
 import { OnboardingTour } from "@/components/builder/OnboardingTour";
+import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 
 export default function BuilderPage() {
   const params = useParams();
   const router = useRouter();
   const botId = Array.isArray(params?.id) ? params.id[0] : (params?.id as string) || "draft";
 
-  // Initial Bot State
+  // Initial Bot State (deterministic for SSR)
   const [config, setConfig] = useState<BotConfig>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem(`pf_bot_${botId}`);
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch {}
-      }
-    }
-    // Default starter: Kisan agricultural assistant preset
     const initial = JSON.parse(JSON.stringify(agricultureTemplate.config));
-    initial.id = botId === "new" ? crypto.randomUUID() : botId;
+    initial.id = botId;
     return initial;
   });
 
   // History stack for Undo/Redo
   const [history, setHistory] = useState<BotConfig[]>([config]);
   const [historyIndex, setHistoryIndex] = useState(0);
+
+  // Load saved bot or generate fresh UUID client-side to prevent hydration mismatch #418
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem(`pf_bot_${botId}`);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setConfig(parsed);
+          setHistory([parsed]);
+          return;
+        } catch {}
+      }
+      if (botId === "new") {
+        setConfig((prev) => ({ ...prev, id: crypto.randomUUID() }));
+      }
+    }
+  }, [botId]);
 
   // UI state
   const [activeChannel, setActiveChannel] = useState<Channel>("web");
@@ -309,11 +319,12 @@ export default function BuilderPage() {
   }, [config]);
 
   return (
-    <div
-      className={`flex flex-col h-screen overflow-hidden transition-colors duration-200 ${
-        theme === "light" ? "light bg-slate-50 text-slate-900" : "dark bg-background text-foreground"
-      }`}
-    >
+    <ErrorBoundary>
+      <div
+        className={`flex flex-col h-screen overflow-hidden transition-colors duration-200 ${
+          theme === "light" ? "light bg-slate-50 text-slate-900" : "dark bg-background text-foreground"
+        }`}
+      >
       {/* Top Header */}
       <BuilderHeader
         config={config}
@@ -420,6 +431,7 @@ export default function BuilderPage() {
       />
 
       <OnboardingTour />
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 }

@@ -41,7 +41,7 @@ export function PreviewTab({
       content:
         config.ui?.greeting ||
         "Hello! I am your AI assistant configured in PersonaForge. How may I help you today?",
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestamp: "Just now",
     },
   ]);
   const [input, setInput] = useState("");
@@ -391,11 +391,13 @@ export function PreviewTab({
       </div>
 
       {/* Voice Agent Live Interactive Modal (Sarvam BulBul v3 + Saarika v2.5) */}
-      <VoiceAgentModal
-        isOpen={isVoiceModalOpen}
-        onClose={() => setIsVoiceModalOpen(false)}
-        config={config}
-      />
+      {isVoiceModalOpen && (
+        <VoiceAgentModal
+          isOpen={isVoiceModalOpen}
+          onClose={() => setIsVoiceModalOpen(false)}
+          config={config}
+        />
+      )}
     </div>
   );
 }
