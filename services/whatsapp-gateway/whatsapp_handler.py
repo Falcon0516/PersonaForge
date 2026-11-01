@@ -44,12 +44,14 @@ load_dotenv()
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886")
-NGROK_PUBLIC_URL = os.getenv("NGROK_PUBLIC_URL", "")
-BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:3000")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL") or os.getenv("NGROK_PUBLIC_URL", "")
+NGROK_PUBLIC_URL = PUBLIC_BASE_URL
+BACKEND_BASE_URL = os.getenv("PLATFORM_URL") or os.getenv("BACKEND_BASE_URL", "http://localhost:3000")
 PORT = int(os.getenv("PORT", "8000"))
-PHONE_SALT = os.getenv("PHONE_SALT", "personaforge-gateway-salt")
+PHONE_SALT = os.getenv("PHONE_HASH_SALT") or os.getenv("PHONE_SALT", "personaforge-gateway-salt")
 DEV_SKIP_SIGNATURE = os.getenv("DEV_SKIP_SIGNATURE", "true").lower() in ("true", "1")
 INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
+TWILIO_SANDBOX_KEYWORD = os.getenv("TWILIO_SANDBOX_KEYWORD", "")
 
 # Directory for temporary TTS audio files
 AUDIO_TMP_DIR = Path(tempfile.gettempdir()) / "personaforge_whatsapp_audio"
