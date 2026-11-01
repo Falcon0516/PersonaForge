@@ -75,8 +75,12 @@ export async function POST(
     ];
 
     for (const m of messages) {
-      if ((m.role === "user" || m.role === "assistant") && typeof m.content === "string") {
-        chatMessages.push({ role: m.role, content: m.content });
+      if (m.role === "user" || m.role === "assistant") {
+        chatMessages.push({
+          role: m.role,
+          content: m.content || "",
+          image: typeof m.image === "string" ? m.image : undefined,
+        });
       }
     }
 

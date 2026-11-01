@@ -11,6 +11,8 @@ import {
   User,
   Volume2,
   CheckCheck,
+  Image as ImageIcon,
+  X,
 } from "lucide-react";
 import { BotConfig, Channel } from "@personaforge/core";
 import { VoiceAgentModal } from "@/components/voice/VoiceAgentModal";
@@ -26,6 +28,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: string;
+  image?: string;
 }
 
 export function PreviewTab({
@@ -45,9 +48,23 @@ export function PreviewTab({
     },
   ]);
   const [input, setInput] = useState("");
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isComposing, setIsComposing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setAttachedImage(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -58,18 +75,20 @@ export function PreviewTab({
   }, [messages, isStreaming]);
 
   const handleSend = async () => {
-    if (!input.trim() || isStreaming) return;
+    if ((!input.trim() && !attachedImage) || isStreaming) return;
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
       content: input.trim(),
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestamp: "Just now",
+      image: attachedImage || undefined,
     };
 
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setInput("");
+    setAttachedImage(null);
     setIsStreaming(true);
 
     const assistantMsgId = crypto.randomUUID();
@@ -77,7 +96,7 @@ export function PreviewTab({
       id: assistantMsgId,
       role: "assistant",
       content: "",
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      timestamp: "Just now",
     };
 
     setMessages([...newMessages, assistantMsg]);
@@ -88,7 +107,11 @@ export function PreviewTab({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           config,
-          messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
+          messages: newMessages.map((m) => ({
+            role: m.role,
+            content: m.content,
+            image: m.image,
+          })),
           channel,
         }),
       });
@@ -306,6 +329,15 @@ export function PreviewTab({
                     : "glass-panel text-slate-200 rounded-bl-none border-slate-800"
                 }`}
               >
+                {msg.image && (
+                  <div className="mb-2 overflow-hidden rounded-xl border border-white/10 max-w-xs">
+                    <img
+                      src={msg.image}
+                      alt="User attachment"
+                      className="max-h-48 w-full object-cover rounded-xl"
+                    />
+                  </div>
+                )}
                 <div className="whitespace-pre-wrap">{msg.content || (isStreaming ? "Thinking..." : "")}</div>
                 <div
                   className={`text-[9px] mt-1 flex items-center justify-end gap-1 ${
@@ -336,16 +368,64 @@ export function PreviewTab({
 
       {/* Input Box */}
       <div className="p-3 border-t border-slate-800 bg-slate-900/40">
+        {/* Attached image preview banner */}
+        {attachedImage && (
+          <div className="mb-2 flex items-center gap-2 p-1.5 bg-slate-900 border border-indigo-500/40 rounded-xl w-fit shadow-md animate-fade-in">
+            <img
+              src={attachedImage}
+              alt="Attached preview"
+              className="w-10 h-10 object-cover rounded-lg border border-slate-700"
+            />
+            <div className="text-[11px] leading-tight pr-1">
+              <span className="text-indigo-300 font-semibold block">Image attached</span>
+              <span className="text-slate-400 text-[10px]">Groq Qwen Vision active</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAttachedImage(null)}
+              className="p-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition"
+              title="Remove image"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         <div className="flex items-end gap-2 bg-slate-950/80 border border-slate-800 focus-within:border-indigo-500 rounded-xl p-2 transition">
+          {/* Hidden File Picker */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept="image/*"
+            className="hidden"
+            onChange={handleImageSelect}
+          />
+
+          {/* Attach Image Button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className={`p-2 rounded-lg transition flex-shrink-0 cursor-pointer ${
+              attachedImage
+                ? "bg-indigo-600 text-white shadow-glow"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            }`}
+            title="Attach image for Groq AI vision analysis"
+          >
+            <ImageIcon className="w-3.5 h-3.5" />
+          </button>
+
           <textarea
             rows={1}
             value={input}
             placeholder={
-              channel === "voice"
+              attachedImage
+                ? "Ask a question about this image..."
+                : channel === "voice"
                 ? "Type a query or click mic to speak..."
                 : channel === "whatsapp"
                 ? "Type a WhatsApp message..."
-                : "Send a message..."
+                : "Send a message or attach an image..."
             }
             onChange={(e) => setInput(e.target.value)}
             onCompositionStart={() => setIsComposing(true)}

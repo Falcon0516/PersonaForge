@@ -375,6 +375,13 @@ async def _process_text_message(phone: str, body: str) -> None:
 
 async def _process_image_message(phone: str, body: str, media_url: str) -> None:
     session = _get_session(phone)
+    user_question = body.strip() if body and body.strip() else ""
+
+    if user_question:
+        detected = ai_services.detect_language(user_question)
+        if detected:
+            session["language"] = detected
+
     language = session["language"] or "hi"
 
     try:
@@ -388,7 +395,6 @@ async def _process_image_message(phone: str, body: str, media_url: str) -> None:
         )
         return
 
-    user_question = body if body and body.strip() else ""
     analysis = ai_services.analyze_agriculture_image(b64_image, user_question, language)
 
     await send_throttled_message_chunks(phone, analysis)

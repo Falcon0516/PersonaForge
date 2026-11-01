@@ -1,8 +1,13 @@
 import { GroqKeyPool, getKeyPool } from "./keypool";
 
+export type MessageContent =
+  | string
+  | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: MessageContent;
+  image?: string;
 }
 
 export interface StreamChatOptions {
@@ -56,7 +61,39 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
   if (activeModel.startsWith("llama-3")) {
     activeModel = "qwen/qwen3.8-27b";
   }
+
+  // Detect image in conversation to auto-switch to Qwen 27B Vision
+  const hasImage = options.messages.some(
+    (m) => !!m.image || (Array.isArray(m.content) && m.content.some((c: any) => c.type === "image_url"))
+  );
+  if (hasImage) {
+    activeModel = "qwen/qwen3.8-27b";
+  }
+
   const fallbackModel = "qwen/qwen3.8-27b";
+
+  // Prepare messages with image_url formatting if needed
+  const groqMessages = options.messages.map((m) => {
+    if (m.image) {
+      return {
+        role: m.role,
+        content: [
+          { type: "image_url", image_url: { url: m.image } },
+          {
+            type: "text",
+            text:
+              typeof m.content === "string" && m.content.trim()
+                ? m.content
+                : "Analyze this image and describe what you see.",
+          },
+        ],
+      };
+    }
+    return {
+      role: m.role,
+      content: m.content,
+    };
+  });
 
   let response: Response | null = null;
   let usedKeyAlias = "";
@@ -99,7 +136,7 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
         },
         body: JSON.stringify({
           model: activeModel,
-          messages: options.messages,
+          messages: groqMessages,
           temperature: options.temperature ?? 0.7,
           max_tokens: options.maxTokens ?? 1024,
           stream: true,

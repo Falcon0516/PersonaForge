@@ -13,6 +13,8 @@ import {
   Check,
   ShieldCheck,
   Mic,
+  Image as ImageIcon,
+  X,
 } from "lucide-react";
 import {
   getTemplateBySlug,
@@ -27,6 +29,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: string;
+  image?: string;
 }
 
 export default function HostedBotPage() {
@@ -71,28 +74,55 @@ export default function HostedBotPage() {
     },
   ]);
   const [input, setInput] = useState("");
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isComposing, setIsComposing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isStreaming]);
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      alert("Please select a valid image file (PNG, JPEG, WebP, etc.)");
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Image size should be under 5MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      setAttachedImage(base64);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
   const handleSend = async () => {
-    if (!input.trim() || isStreaming) return;
+    if ((!input.trim() && !attachedImage) || isStreaming) return;
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
       content: input.trim(),
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      image: attachedImage || undefined,
     };
 
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
     setInput("");
+    setAttachedImage(null);
     setIsStreaming(true);
 
     const assistantMsgId = crypto.randomUUID();
@@ -110,7 +140,11 @@ export default function HostedBotPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
+          messages: newMessages.map((m) => ({
+            role: m.role,
+            content: m.content,
+            image: m.image,
+          })),
         }),
       });
 
@@ -262,6 +296,15 @@ export default function HostedBotPage() {
                     backgroundColor: isUser ? primaryColor : undefined,
                   }}
                 >
+                  {msg.image && (
+                    <div className="mb-2 overflow-hidden rounded-xl border border-white/10 max-w-xs">
+                      <img
+                        src={msg.image}
+                        alt="Attached preview"
+                        className="max-h-48 w-full object-cover rounded-xl"
+                      />
+                    </div>
+                  )}
                   <div className="whitespace-pre-wrap">{msg.content || (isStreaming ? "Thinking..." : "")}</div>
 
                   <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1.5 pt-1 border-t border-slate-800/40 gap-3">
@@ -334,11 +377,57 @@ export default function HostedBotPage() {
 
         {/* Input */}
         <div className="p-3 border-t border-slate-800 bg-slate-900/40">
+          {/* Image preview badge */}
+          {attachedImage && (
+            <div className="mb-2 flex items-center gap-2 p-1.5 rounded-xl bg-slate-900 border border-indigo-500/30 w-fit">
+              <img
+                src={attachedImage}
+                alt="Preview"
+                className="w-10 h-10 object-cover rounded-lg border border-slate-700"
+              />
+              <div className="text-xs pr-1">
+                <span className="text-indigo-300 font-semibold block text-[11px]">Image attached</span>
+                <span className="text-slate-400 text-[10px]">Groq Qwen Vision active</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAttachedImage(null)}
+                className="p-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                title="Remove image"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           <div className="flex items-center gap-2 bg-slate-950/80 border border-slate-800 focus-within:border-indigo-500 rounded-xl px-3 py-1.5 transition">
+            {/* Hidden File Picker */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/*"
+              className="hidden"
+              onChange={handleImageSelect}
+            />
+
+            {/* Attach Image Button */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className={`p-2 rounded-lg transition flex-shrink-0 cursor-pointer ${
+                attachedImage
+                  ? "bg-indigo-600 text-white shadow-glow"
+                  : "text-slate-400 hover:text-white hover:bg-slate-800"
+              }`}
+              title="Attach image for Groq AI vision analysis"
+            >
+              <ImageIcon className="w-4 h-4" />
+            </button>
+
             <input
               type="text"
               value={input}
-              placeholder="Type your message..."
+              placeholder={attachedImage ? "Ask a question about this image..." : "Type your message..."}
               onChange={(e) => setInput(e.target.value)}
               onCompositionStart={() => setIsComposing(true)}
               onCompositionEnd={() => setIsComposing(false)}
@@ -361,7 +450,7 @@ export default function HostedBotPage() {
 
             <button
               onClick={handleSend}
-              disabled={!input.trim() || isStreaming}
+              disabled={(!input.trim() && !attachedImage) || isStreaming}
               className="p-2 rounded-lg text-white disabled:opacity-40 transition cursor-pointer"
               style={{ backgroundColor: primaryColor }}
             >

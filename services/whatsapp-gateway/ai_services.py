@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 GROQ_LLM_MODEL = os.getenv("GROQ_DEFAULT_MODEL", "qwen/qwen3.8-27b")
 GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
-GROQ_VISION_FALLBACK = "llama-3.2-11b-vision-preview"
+GROQ_VISION_FALLBACK = os.getenv("GROQ_VISION_FALLBACK", "qwen/qwen3.8-27b")
 
 GROQ_CANDIDATE_MODELS = [
     os.getenv("GROQ_DEFAULT_MODEL", "qwen/qwen3.8-27b"),
@@ -205,17 +205,17 @@ def get_llm_response(history: list[dict], system_prompt: str, language: str) -> 
 # Image analysis (Groq Vision)
 # ---------------------------------------------------------------------------
 def analyze_agriculture_image(base64_image: str, user_question: str, language: str) -> str:
-    """Analyse a crop/farm image via Groq Vision API and return advice."""
+    """Analyse an image via Groq Vision API and return description/advice."""
     lang_info = LANGUAGE_MAP.get(language, LANGUAGE_MAP["en"])
     if not user_question or not user_question.strip():
-        user_question = "Analyze this agricultural image and provide relevant advice for a farmer."
+        user_question = "Analyze this image in detail, describe what you see, and provide relevant advice or observations."
 
     system_content = (
-        "You are an expert agricultural advisor with deep knowledge of Indian crops, "
-        "pests, soil conditions, and farming practices. Analyze the provided image and "
-        "give specific, actionable advice. "
+        "You are an expert AI advisor with deep knowledge of agriculture, crops, "
+        "farming practices, and general visual analysis. Analyze the provided image, answer any query the user has asked, "
+        "and provide clear, specific, actionable insights. "
         f"You MUST respond ONLY in {lang_info['name']}. "
-        "Keep your response concise and farmer-friendly."
+        "Keep your response concise, clear, and friendly."
     )
 
     for model_name in [GROQ_VISION_MODEL, GROQ_VISION_FALLBACK]:

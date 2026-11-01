@@ -45,10 +45,11 @@ export async function POST(req: NextRequest) {
 
     // Filter incoming user & assistant messages
     for (const msg of messages) {
-      if (msg && (msg.role === "user" || msg.role === "assistant") && typeof msg.content === "string") {
+      if (msg && (msg.role === "user" || msg.role === "assistant")) {
         chatMessages.push({
           role: msg.role,
-          content: msg.content,
+          content: msg.content || "",
+          image: typeof msg.image === "string" ? msg.image : undefined,
         });
       }
     }
