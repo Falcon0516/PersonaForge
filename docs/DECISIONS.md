@@ -46,5 +46,13 @@
   - `sentence`: Delimited full sentences parsed via `SentenceDetector` on punctuation boundaries (`. `, `! `, `? `, `\n\n`) for direct pipeline feeding to Sarvam TTS.
   - `done`: Usage metrics and finish reason.
   - `error`: User-friendly error message without leaking stack traces or internal secrets.
-  The gateway performs pre-stream retry and key cooldown failover before SSE headers commit.
+---
+
+## DECISION-007: WhatsApp Gateway FastAck & Salted Phone Session Hashing
+- **Status:** Approved & Implemented (Milestone 6)
+- **Context:** Twilio enforces a strict 15-second timeout on incoming webhook responses. Audio transcoding and multi-step voice/vision LLM synthesis can take 4–12 seconds. In addition, privacy regulations prohibit storing unencrypted consumer phone numbers in databases.
+- **Decision:** 
+  1. The `/webhook` endpoint returns an immediate HTTP 200 FastAck (<50ms) to Twilio and delegates LLM and media synthesis to FastAPI `BackgroundTasks`.
+  2. All persistent session storage maps salted phone hashes (`sha256(salt + phone) -> botId`), ensuring consumer phone numbers are used solely in transient memory for outbound delivery.
+  3. Outbound messages exceeding 1500 characters are automatically split at sentence boundaries and dispatched with a 1.2-second pacing throttle to satisfy WhatsApp anti-spam rate limits.
 
