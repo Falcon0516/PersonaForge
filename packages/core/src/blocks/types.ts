@@ -45,3 +45,7 @@ export interface BlockDef<V = unknown> {
   conflicts?: ConflictRule<V>[];
   requires?: string[];
 }
+
+export type BlockDefinition<V = unknown> = BlockDef<V>;
+export type BlockCategory = CategoryId;
+

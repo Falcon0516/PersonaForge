@@ -73,3 +73,6 @@ export interface ScoreResult {
   score: number; // 0 to 100
   checks: Check[];
 }
+
+export type QualityReport = ScoreResult;
+
