@@ -13,6 +13,7 @@ import {
   CheckCheck,
 } from "lucide-react";
 import { BotConfig, Channel } from "@personaforge/core";
+import { VoiceAgentModal } from "@/components/voice/VoiceAgentModal";
 
 interface PreviewTabProps {
   config: BotConfig;
@@ -32,6 +33,7 @@ export function PreviewTab({
   channel,
   onChangeChannel,
 }: PreviewTabProps) {
+  const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "initial",
@@ -259,11 +261,18 @@ export function PreviewTab({
       {/* Voice mode simulated banner */}
       {channel === "voice" && (
         <div className="bg-violet-950/40 border-b border-violet-800/30 text-violet-200 px-4 py-2 text-xs flex items-center justify-between">
-          <span className="flex items-center gap-1.5">
+          <span className="flex items-center gap-1.5 font-medium">
             <Volume2 className="w-3.5 h-3.5 text-violet-400 animate-pulse" />
-            Sarvam BulBul v3 Voice Synthesizer active
+            Sarvam BulBul v3 Voice Synthesizer
           </span>
-          <span className="text-[10px] text-violet-400 font-mono">Sentence Chunking</span>
+          <button
+            onClick={() => setIsVoiceModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-semibold text-xs shadow-glow transition cursor-pointer"
+            title="Launch live interactive voice agent"
+          >
+            <Mic className="w-3.5 h-3.5" />
+            <span>Speak with AI</span>
+          </button>
         </div>
       )}
 
@@ -333,7 +342,7 @@ export function PreviewTab({
             value={input}
             placeholder={
               channel === "voice"
-                ? "Type a query or speak to bot..."
+                ? "Type a query or click mic to speak..."
                 : channel === "whatsapp"
                 ? "Type a WhatsApp message..."
                 : "Send a message..."
@@ -344,18 +353,49 @@ export function PreviewTab({
             onKeyDown={handleKeyDown}
             className="flex-1 bg-transparent border-0 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none resize-none max-h-24 py-1"
           />
+
+          {/* Dedicated Microphone Button to Speak via Sarvam AI */}
+          <button
+            type="button"
+            onClick={() => setIsVoiceModalOpen(true)}
+            className={`p-2 rounded-lg transition flex-shrink-0 cursor-pointer ${
+              channel === "voice"
+                ? "bg-violet-600 hover:bg-violet-500 text-white shadow-glow animate-pulse"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            }`}
+            title="Speak to Bot with Sarvam Voice AI (Saarika STT + BulBul TTS)"
+          >
+            <Mic className="w-3.5 h-3.5" />
+          </button>
+
           <button
             onClick={handleSend}
             disabled={!input.trim() || isStreaming}
-            className="p-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white transition flex-shrink-0"
+            className="p-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 text-white transition flex-shrink-0 cursor-pointer"
+            title="Send text message"
           >
             <Send className="w-3.5 h-3.5" />
           </button>
         </div>
-        <div className="text-[10px] text-slate-500 text-center mt-1.5">
-          Enter to send &bull; Shift + Enter for new line
+        <div className="text-[10px] text-slate-500 text-center mt-1.5 flex items-center justify-center gap-2">
+          <span>Enter to send &bull; Shift + Enter for new line</span>
+          {channel === "voice" && (
+            <button
+              onClick={() => setIsVoiceModalOpen(true)}
+              className="text-violet-400 hover:text-violet-300 font-medium underline flex items-center gap-1 cursor-pointer"
+            >
+              <Mic className="w-2.5 h-2.5" /> Open Voice Call
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Voice Agent Live Interactive Modal (Sarvam BulBul v3 + Saarika v2.5) */}
+      <VoiceAgentModal
+        isOpen={isVoiceModalOpen}
+        onClose={() => setIsVoiceModalOpen(false)}
+        config={config}
+      />
     </div>
   );
 }

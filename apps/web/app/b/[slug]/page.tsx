@@ -12,6 +12,7 @@ import {
   Copy,
   Check,
   ShieldCheck,
+  Mic,
 } from "lucide-react";
 import {
   getTemplateBySlug,
@@ -19,6 +20,7 @@ import {
   agricultureTemplate,
   BotConfig,
 } from "@personaforge/core";
+import { VoiceAgentModal } from "@/components/voice/VoiceAgentModal";
 
 interface Message {
   id: string;
@@ -59,6 +61,7 @@ export default function HostedBotPage() {
   const showTimestamps = ui.showTimestamps !== false;
   const showPoweredBy = ui.showPoweredBy !== false;
 
+  const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "initial",
@@ -215,13 +218,23 @@ export default function HostedBotPage() {
             </div>
           </div>
 
-          <button
-            onClick={resetChat}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition"
-            title="Reset conversation"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsVoiceModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold shadow-glow transition cursor-pointer"
+              title="Speak with Sarvam AI Voice Agent (BulBul v3 & Saarika v2.5)"
+            >
+              <Mic className="w-3.5 h-3.5 animate-pulse" />
+              <span className="hidden sm:inline">Voice Call</span>
+            </button>
+            <button
+              onClick={resetChat}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+              title="Reset conversation"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          </div>
         </header>
 
         {/* Messages */}
@@ -338,9 +351,18 @@ export default function HostedBotPage() {
               className="flex-1 bg-transparent border-none text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none py-1.5"
             />
             <button
+              type="button"
+              onClick={() => setIsVoiceModalOpen(true)}
+              className="p-2 rounded-lg text-violet-400 hover:text-white hover:bg-violet-600/30 transition cursor-pointer"
+              title="Speak to bot using microphone"
+            >
+              <Mic className="w-4 h-4" />
+            </button>
+
+            <button
               onClick={handleSend}
               disabled={!input.trim() || isStreaming}
-              className="p-2 rounded-lg text-white disabled:opacity-40 transition"
+              className="p-2 rounded-lg text-white disabled:opacity-40 transition cursor-pointer"
               style={{ backgroundColor: primaryColor }}
             >
               <Send className="w-4 h-4" />
@@ -355,6 +377,13 @@ export default function HostedBotPage() {
           )}
         </div>
       </div>
+
+      {/* Voice Agent Live Interactive Modal */}
+      <VoiceAgentModal
+        isOpen={isVoiceModalOpen}
+        onClose={() => setIsVoiceModalOpen(false)}
+        config={config}
+      />
     </div>
   );
 }
