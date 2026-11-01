@@ -25,8 +25,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-GROQ_LLM_MODEL = "llama-3.3-70b-versatile"
-GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+GROQ_LLM_MODEL = os.getenv("GROQ_DEFAULT_MODEL", "llama-3.1-8b-instant")
+GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
+GROQ_VISION_FALLBACK = "llama-3.2-11b-vision-preview"
 
 SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
 SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
@@ -178,39 +179,42 @@ def analyze_agriculture_image(base64_image: str, user_question: str, language: s
         "Keep your response concise and farmer-friendly."
     )
 
-    try:
-        client = _get_groq_client()
-        resp = client.chat.completions.create(
-            model=GROQ_VISION_MODEL,
-            messages=[
-                {"role": "system", "content": system_content},
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}",
+    for model_name in [GROQ_VISION_MODEL, GROQ_VISION_FALLBACK]:
+        try:
+            client = _get_groq_client()
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_content},
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}",
+                                },
                             },
-                        },
-                        {"type": "text", "text": user_question},
-                    ],
-                },
-            ],
-            max_tokens=500,
-            temperature=0.5,
-        )
-        analysis = resp.choices[0].message.content.strip()
-        logger.info("Image analysis completed (%d chars)", len(analysis))
-        return analysis
-    except Exception:
-        logger.exception("Groq Vision API call failed")
-        fallback = {
-            "en": "I'm sorry, I couldn't analyze the image right now. Please try again.",
-            "hi": "क्षमा करें, छवि का विश्लेषण नहीं हो पाया। कृपया पुनः प्रयास करें।",
-            "kn": "ಕ್ಷಮಿಸಿ, ಚಿತ್ರ ವಿಶ್ಲೇಷಿಸಲಾಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
-        }
-        return fallback.get(language, fallback["en"])
+                            {"type": "text", "text": user_question},
+                        ],
+                    },
+                ],
+                max_tokens=500,
+                temperature=0.5,
+            )
+            analysis = resp.choices[0].message.content.strip()
+            logger.info("Image analysis completed with %s (%d chars)", model_name, len(analysis))
+            return analysis
+        except Exception:
+            logger.warning("Groq Vision API call with model %s failed, trying fallback", model_name)
+
+    logger.exception("All Groq Vision models failed")
+    fallback = {
+        "en": "I'm sorry, I couldn't analyze the image right now. Please try again.",
+        "hi": "क्षमा करें, छवि का विश्लेषण नहीं हो पाया। कृपया पुनः प्रयास करें।",
+        "kn": "ಕ್ಷಮಿಸಿ, ಚಿತ್ರ ವಿಶ್ಲೇಷಿಸಲಾಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
+    }
+    return fallback.get(language, fallback["en"])
 
 
 # ---------------------------------------------------------------------------

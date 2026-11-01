@@ -65,7 +65,7 @@ export const agricultureTemplate: TemplatePreset = {
       "channel.image_understanding": true,
     },
     runtime: {
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.1-8b-instant",
       fallbackModels: ["llama-3.1-8b-instant"],
       temperature: 0.5,
       maxTokens: 600,

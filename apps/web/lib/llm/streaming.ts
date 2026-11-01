@@ -53,7 +53,7 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
   const pool = options.pool || getKeyPool();
   const maxAttempts = 4;
   let attempt = 0;
-  let activeModel = options.model || "llama-3.3-70b-versatile";
+  let activeModel = options.model || process.env.GROQ_DEFAULT_MODEL || "llama-3.1-8b-instant";
   const fallbackModel = "llama-3.1-8b-instant";
 
   let response: Response | null = null;
@@ -120,6 +120,13 @@ export async function* streamChat(options: StreamChatOptions): AsyncGenerator<St
 
       if (!response.ok) {
         const errText = await response.text();
+        if (response.status === 404 || errText.includes("does not exist") || errText.includes("model_not_found")) {
+          if (activeModel !== fallbackModel) {
+            activeModel = fallbackModel;
+            attempt++;
+            continue;
+          }
+        }
         attempt++;
         if (attempt >= maxAttempts) {
           yield {
