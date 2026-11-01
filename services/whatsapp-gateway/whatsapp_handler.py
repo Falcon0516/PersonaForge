@@ -322,10 +322,34 @@ async def _handle_command(phone: str, command_text: str) -> bool:
 
     if cmd == "/lang":
         if not arg:
-            send_whatsapp_message(phone, "Usage: `/lang <hi|kn|en>`")
+            send_whatsapp_message(
+                phone,
+                "Usage: `/lang <hi|kn|en>` (e.g. `/lang hi`, `/lang kannada`, `/lang english`)",
+            )
             return True
-        session["language"] = arg.lower()
-        send_whatsapp_message(phone, f"🌐 Preferred language updated to: *{arg}*")
+        norm = arg.lower().strip()
+        lang_map = {
+            "hi": "hi",
+            "hindi": "hi",
+            "हिंदी": "hi",
+            "kn": "kn",
+            "kannada": "kn",
+            "ಕನ್ನಡ": "kn",
+            "en": "en",
+            "english": "en",
+        }
+        chosen = lang_map.get(norm, norm)
+        if chosen in ("hi", "kn", "en"):
+            session["language"] = chosen
+            lang_names = {"hi": "Hindi (हिंदी)", "kn": "Kannada (ಕನ್ನಡ)", "en": "English"}
+            send_whatsapp_message(
+                phone, f"🌐 Preferred language updated to: *{lang_names.get(chosen, chosen)}*"
+            )
+        else:
+            send_whatsapp_message(
+                phone,
+                "⚠️ Supported languages: `hi` (Hindi), `kn` (Kannada), `en` (English). Example: `/lang hi`",
+            )
         return True
 
     if cmd == "/help":
