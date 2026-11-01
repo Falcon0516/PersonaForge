@@ -67,6 +67,7 @@ export const BotConfig = z.object({
   channels: BotChannelsConfig.default({}),
 });
 
+export const BotConfigSchema = BotConfig;
 export type BotConfig = z.infer<typeof BotConfig>;
 
 // PublicBot: client-safe subset. NEVER includes the compiled prompt or server credentials.

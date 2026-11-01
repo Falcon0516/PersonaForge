@@ -265,3 +265,12 @@ export function compile(config: BotConfig, options: CompileOptions = {}): Compil
     droppedBlocks,
   };
 }
+
+export function compilePrompt(
+  config: BotConfig,
+  channel: Channel = "web",
+  options: CompileOptions = {}
+): CompiledOutput {
+  return compile(config, { channel, ...options });
+}
+
