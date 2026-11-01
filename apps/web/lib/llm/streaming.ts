@@ -52,12 +52,15 @@ export class SentenceDetector {
 export async function* streamChat(options: StreamChatOptions): AsyncGenerator<StreamEvent, void, unknown> {
   const pool = options.pool || getKeyPool();
   const maxAttempts = 4;
-  let attempt = 0;
-  let activeModel = options.model || process.env.GROQ_DEFAULT_MODEL || "llama-3.1-8b-instant";
-  const fallbackModel = "llama-3.1-8b-instant";
+  let activeModel = options.model || process.env.GROQ_DEFAULT_MODEL || "qwen/qwen3.8-27b";
+  if (activeModel.startsWith("llama-3")) {
+    activeModel = "qwen/qwen3.8-27b";
+  }
+  const fallbackModel = "qwen/qwen3.8-27b";
 
   let response: Response | null = null;
   let usedKeyAlias = "";
+  let attempt = 0;
 
   while (attempt < maxAttempts) {
     if (options.signal?.aborted) {
