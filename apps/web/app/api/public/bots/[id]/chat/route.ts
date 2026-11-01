@@ -8,6 +8,22 @@ import {
 import { getRedisClient } from "@/lib/redis/client";
 import { createSSEStreamResponse, ChatMessage } from "@/lib/llm/streaming";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With, Accept",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      ...corsHeaders,
+      "Access-Control-Max-Age": "86400",
+    },
+  });
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -18,7 +34,10 @@ export async function POST(
     const { messages } = body;
 
     if (!Array.isArray(messages)) {
-      return NextResponse.json({ error: "Invalid 'messages' array" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid 'messages' array" },
+        { status: 400, headers: corsHeaders }
+      );
     }
 
     // Resolve bot configuration
@@ -28,14 +47,17 @@ export async function POST(
       (id === "kisan-mitra" || id.includes("agriculture") ? agricultureTemplate.config : null);
 
     if (!bot) {
-      return NextResponse.json({ error: "Bot not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Bot not found" },
+        { status: 404, headers: corsHeaders }
+      );
     }
 
     // Kill switch: Check if Web channel is enabled
     if (bot.channels?.web?.enabled === false) {
       return NextResponse.json(
         { error: "Web channel is disabled for this bot" },
-        { status: 403 }
+        { status: 403, headers: corsHeaders }
       );
     }
 
@@ -49,7 +71,7 @@ export async function POST(
     } else if (currentCount > 30) {
       return NextResponse.json(
         { error: "Rate limit exceeded. Please wait 60 seconds." },
-        { status: 429 }
+        { status: 429, headers: corsHeaders }
       );
     }
 
@@ -60,7 +82,7 @@ export async function POST(
     if (consumedTokens > 100000) {
       return NextResponse.json(
         { error: "Daily token quota exceeded for this bot. Please contact admin." },
-        { status: 429 }
+        { status: 429, headers: corsHeaders }
       );
     }
 
@@ -98,12 +120,13 @@ export async function POST(
       },
       {
         headers: {
+          ...corsHeaders,
           "X-PersonaForge-Bot": bot.slug,
           "X-PersonaForge-Tokens": String(compiled.tokenEstimate),
         },
       }
     );
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    return NextResponse.json({ error: String(err) }, { status: 500, headers: corsHeaders });
   }
 }

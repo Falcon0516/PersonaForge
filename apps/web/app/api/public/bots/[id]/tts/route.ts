@@ -10,6 +10,22 @@ import {
 const SILENT_WAV_BASE64 =
   "UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAP//";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With, Accept",
+};
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      ...corsHeaders,
+      "Access-Control-Max-Age": "86400",
+    },
+  });
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -20,7 +36,10 @@ export async function POST(
     const { text, target_language_code = "hi-IN", speaker, pace } = body;
 
     if (!text || typeof text !== "string") {
-      return NextResponse.json({ error: "Text string is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Text string is required" },
+        { status: 400, headers: corsHeaders }
+      );
     }
 
     // Resolve bot configuration
@@ -36,10 +55,13 @@ export async function POST(
 
     if (!sarvamApiKey || sarvamApiKey.includes("your-sarvam")) {
       // Offline / Developer Mock Fallback
-      return NextResponse.json({
-        audios: [SILENT_WAV_BASE64],
-        mock: true,
-      });
+      return NextResponse.json(
+        {
+          audios: [SILENT_WAV_BASE64],
+          mock: true,
+        },
+        { headers: corsHeaders }
+      );
     }
 
     const res = await fetch("https://api.sarvam.ai/text-to-speech", {
@@ -62,15 +84,21 @@ export async function POST(
       const errText = await res.text();
       return NextResponse.json(
         { error: `Sarvam TTS error (${res.status}): ${errText.slice(0, 150)}` },
-        { status: res.status }
+        { status: res.status, headers: corsHeaders }
       );
     }
 
     const data = await res.json();
-    return NextResponse.json({
-      audios: data.audios || [SILENT_WAV_BASE64],
-    });
+    return NextResponse.json(
+      {
+        audios: data.audios || [SILENT_WAV_BASE64],
+      },
+      { headers: corsHeaders }
+    );
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 500 });
+    return NextResponse.json(
+      { error: String(err) },
+      { status: 500, headers: corsHeaders }
+    );
   }
 }

@@ -542,9 +542,15 @@ export function generateStandaloneHtml({
             }
           }
 
-          messageHistory.push({ role: "assistant", content: accumulated });
         } catch (err) {
-          assistantBubble.textContent = "Error: " + String(err);
+          const errStr = String(err);
+          if (errStr.includes("Failed to fetch") || errStr.includes("NetworkError")) {
+            assistantBubble.innerHTML = mode === "hosted"
+              ? '<span style="color:#f87171;font-weight:600;">⚠️ Connection Error: Failed to reach hosted server.</span><br><span style="font-size:11px;color:#94a3b8;line-height:1.4;display:block;margin-top:4px;">Could not connect to: <code style="background:rgba(0,0,0,0.3);padding:2px 4px;border-radius:4px;">' + apiEndpoint + '</code>.<br><br>• Make sure the PersonaForge server is running and has CORS enabled.<br>• To run this bot 100% standalone offline without a server, download the <strong>BYOK (Bring Your Own Key)</strong> version!</span>'
+              : '<span style="color:#f87171;font-weight:600;">⚠️ Network Error: Could not connect to Groq API.</span><br><span style="font-size:11px;color:#94a3b8;display:block;margin-top:4px;">Please check your internet connection and verify that your Groq key is active.</span>';
+          } else {
+            assistantBubble.textContent = "Error: " + errStr;
+          }
         } finally {
           isStreaming = false;
           sendBtn.disabled = false;
