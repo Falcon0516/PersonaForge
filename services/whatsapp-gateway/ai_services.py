@@ -296,8 +296,14 @@ def transcribe_audio(audio_file_path: str) -> str:
 def text_to_speech(text: str, language: str) -> Optional[bytes]:
     """Convert text to speech via Sarvam AI TTS. Returns WAV bytes or None."""
     lang_info = LANGUAGE_MAP.get(language, LANGUAGE_MAP["en"])
+    # Strip markdown symbols and truncate to 450 chars (Sarvam limit is 500 chars per item)
+    clean_text = text.replace("*", "").replace("#", "").replace("_", "").replace("`", "").strip()
+    speech_text = clean_text[:450] if len(clean_text) > 450 else clean_text
+    if not speech_text:
+        return None
+
     payload = {
-        "inputs": [text],
+        "inputs": [speech_text],
         "target_language_code": lang_info["bcp47"],
         "speaker": lang_info["tts_speaker"],
         "model": SARVAM_TTS_MODEL,

@@ -243,6 +243,25 @@ def _downscale_image(image_bytes: bytes, max_dim: int = 1280) -> bytes:
         return image_bytes
 
 
+def _transcode_to_mp3(wav_path: str, mp3_path: str) -> bool:
+    """Transcode WAV audio to MP3 using ffmpeg for native WhatsApp voice note player compatibility."""
+    try:
+        import subprocess
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", wav_path,
+            "-codec:a", "libmp3lame",
+            "-b:a", "128k",
+            mp3_path,
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        return res.returncode == 0 and os.path.exists(mp3_path)
+    except Exception as e:
+        logger.warning("FFmpeg transcoding to MP3 failed: %s", e)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Command Dispatcher
 # ---------------------------------------------------------------------------
@@ -408,17 +427,26 @@ async def _process_voice_message(phone: str, media_url: str, content_type: str) 
     # Send text transcript confirmation
     send_whatsapp_message(phone, f"🎤 _{transcript}_\n\n{reply}")
 
-    # Generate TTS audio
+    # Generate TTS audio with Sarvam BulBul v3
     tts_audio = ai_services.text_to_speech(reply, language)
     if tts_audio:
         audio_id = uuid.uuid4().hex
-        out_filename = f"response_{audio_id}.wav"
-        out_path = str(AUDIO_TMP_DIR / out_filename)
-        with open(out_path, "wb") as f:
+        wav_filename = f"raw_{audio_id}.wav"
+        wav_path = str(AUDIO_TMP_DIR / wav_filename)
+        with open(wav_path, "wb") as f:
             f.write(tts_audio)
 
-        audio_public_url = f"{NGROK_PUBLIC_URL}/audio/{out_filename}"
-        send_whatsapp_message(phone, "🔊", media_url=audio_public_url)
+        mp3_filename = f"voice_{audio_id}.mp3"
+        mp3_path = str(AUDIO_TMP_DIR / mp3_filename)
+
+        if _transcode_to_mp3(wav_path, mp3_path):
+            audio_public_url = f"{NGROK_PUBLIC_URL}/audio/{mp3_filename}"
+            logger.info("Delivering WhatsApp MP3 audio note via Twilio: %s", audio_public_url)
+            send_whatsapp_message(phone, "", media_url=audio_public_url)
+        else:
+            audio_public_url = f"{NGROK_PUBLIC_URL}/audio/{wav_filename}"
+            logger.info("Delivering WhatsApp WAV audio note via Twilio: %s", audio_public_url)
+            send_whatsapp_message(phone, "", media_url=audio_public_url)
 
     session["history"].append({"role": "assistant", "content": reply})
 
@@ -491,11 +519,13 @@ async def serve_audio(filename: str):
         return JSONResponse({"error": "Audio file expired or not found"}, status_code=404)
 
     media_type = (
-        "audio/wav"
+        "audio/mpeg"
+        if filename.endswith(".mp3")
+        else "audio/ogg"
+        if filename.endswith(".ogg")
+        else "audio/wav"
         if filename.endswith(".wav")
         else "audio/mp4"
-        if filename.endswith(".mp4")
-        else "audio/mpeg"
     )
     return FileResponse(str(file_path), media_type=media_type, filename=filename)
 
