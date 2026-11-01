@@ -53,6 +53,33 @@ export default function BuilderPage() {
   const [activeTab, setActiveTab] = useState<RightTab>("preview");
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
 
+  // Light / Dark Theme Mode
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("pf_builder_theme") as "dark" | "light") || "dark";
+    }
+    return "dark";
+  });
+
+  const handleToggleTheme = useCallback(() => {
+    setTheme((prev) => {
+      const next = prev === "dark" ? "light" : "dark";
+      if (typeof window !== "undefined") {
+        localStorage.setItem("pf_builder_theme", next);
+        document.documentElement.classList.toggle("light", next === "light");
+        document.documentElement.classList.toggle("dark", next === "dark");
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      document.documentElement.classList.toggle("light", theme === "light");
+      document.documentElement.classList.toggle("dark", theme === "dark");
+    }
+  }, [theme]);
+
   // Modals
   const [isMagicBoxOpen, setIsMagicBoxOpen] = useState(false);
   const [isTemplatesOpen, setIsTemplatesOpen] = useState(false);
@@ -282,7 +309,11 @@ export default function BuilderPage() {
   }, [config]);
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden bg-background text-foreground">
+    <div
+      className={`flex flex-col h-screen overflow-hidden transition-colors duration-200 ${
+        theme === "light" ? "light bg-slate-50 text-slate-900" : "dark bg-background text-foreground"
+      }`}
+    >
       {/* Top Header */}
       <BuilderHeader
         config={config}
@@ -301,12 +332,14 @@ export default function BuilderPage() {
         onRemix={handleRemix}
         onOpenVersions={() => setIsVersionsOpen(true)}
         onOpenPublish={() => setIsPublishOpen(true)}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
       />
 
       {/* Main 3-Pane Body */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Pane: Block Palette (320px) */}
-        <aside className="w-80 flex-shrink-0 hidden md:block">
+        <aside className="w-80 flex-shrink-0 hidden md:block border-r border-slate-800">
           <BlockPalette
             canvasBlockIds={blockOrder}
             botMode={config.mode}
@@ -326,6 +359,7 @@ export default function BuilderPage() {
             onApplyFix={handleApplyFix}
             onOpenMagicBox={() => setIsMagicBoxOpen(true)}
             onOpenTemplates={() => setIsTemplatesOpen(true)}
+            onAddBlock={handleAddBlock}
           />
         </main>
 

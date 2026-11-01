@@ -15,6 +15,8 @@ import {
   Cpu,
   Mic,
   MessageSquare,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { BotConfig } from "@personaforge/core";
 
@@ -31,6 +33,8 @@ interface BuilderHeaderProps {
   onRemix: () => void;
   onOpenVersions: () => void;
   onOpenPublish: () => void;
+  theme?: "dark" | "light";
+  onToggleTheme?: () => void;
 }
 
 export function BuilderHeader({
@@ -46,6 +50,8 @@ export function BuilderHeader({
   onRemix,
   onOpenVersions,
   onOpenPublish,
+  theme = "dark",
+  onToggleTheme,
 }: BuilderHeaderProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameVal, setNameVal] = useState(config.name);
@@ -201,6 +207,21 @@ export function BuilderHeader({
         >
           <History className="w-3.5 h-3.5" />
         </button>
+
+        {/* Theme Toggle (Light / Dark) */}
+        {onToggleTheme && (
+          <button
+            onClick={onToggleTheme}
+            className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-amber-400 border border-slate-800 transition"
+            title={`Switch to ${theme === "dark" ? "Light" : "Dark"} mode`}
+          >
+            {theme === "light" ? (
+              <Moon className="w-3.5 h-3.5 text-indigo-400" />
+            ) : (
+              <Sun className="w-3.5 h-3.5 text-amber-400" />
+            )}
+          </button>
+        )}
 
         {/* Publish */}
         <button

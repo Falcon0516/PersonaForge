@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { Search, Plus, Check, Zap, Layers, X } from "lucide-react";
+import { Search, Plus, Check, Zap, Layers, X, GripVertical } from "lucide-react";
 import { getAllBlocks, CATEGORIES, CategoryId, BlockDef } from "@personaforge/core";
 
 interface BlockPaletteProps {
@@ -118,28 +118,50 @@ export function BlockPalette({
             return (
               <div
                 key={block.id}
-                className="group p-3 rounded-xl bg-slate-900/50 hover:bg-slate-900 border border-slate-800/80 hover:border-slate-700 transition duration-150 space-y-1.5"
+                draggable={!isAdded}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData("application/personaforge-block", block.id);
+                  e.dataTransfer.setData("text/plain", block.id);
+                  e.dataTransfer.effectAllowed = "copy";
+                }}
+                className={`group p-3 rounded-xl border transition-all duration-150 space-y-2 select-none ${
+                  isAdded
+                    ? "bg-slate-900/30 border-slate-800/40 opacity-70 cursor-default"
+                    : "bg-slate-900/70 hover:bg-slate-900 border-slate-800/80 hover:border-indigo-500/50 hover:shadow-lg hover:shadow-indigo-500/10 cursor-grab active:cursor-grabbing hover:-translate-y-0.5"
+                }`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-xs font-semibold text-slate-200 group-hover:text-white transition">
-                        {block.label}
-                      </span>
+                  <div className="flex items-start gap-2 min-w-0">
+                    {!isAdded ? (
+                      <GripVertical className="w-3.5 h-3.5 text-slate-600 group-hover:text-indigo-400 flex-shrink-0 mt-0.5 transition" />
+                    ) : (
+                      <div className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    )}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-semibold text-slate-200 group-hover:text-white transition">
+                          {block.label}
+                        </span>
+                        {!isAdded && (
+                          <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 opacity-0 group-hover:opacity-100 transition">
+                            drag to canvas
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">
+                        {block.description}
+                      </p>
                     </div>
-                    <p className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">
-                      {block.description}
-                    </p>
                   </div>
 
                   <button
                     onClick={() => onAddBlock(block.id)}
                     className={`flex-shrink-0 p-1.5 rounded-lg transition ${
                       isAdded
-                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20"
-                        : "bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-600 hover:text-white"
+                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 cursor-default"
+                        : "bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-600 hover:text-white cursor-pointer"
                     }`}
-                    title={isAdded ? "Added to canvas" : "Add block to canvas"}
+                    title={isAdded ? "Added to canvas" : "Click to add or drag to canvas"}
                   >
                     {isAdded ? (
                       <Check className="w-3.5 h-3.5" />

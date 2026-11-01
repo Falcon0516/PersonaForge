@@ -34,6 +34,7 @@ interface CanvasProps {
   onApplyFix: (conflict: Conflict) => void;
   onOpenMagicBox: () => void;
   onOpenTemplates: () => void;
+  onAddBlock: (blockId: string) => void;
 }
 
 export function Canvas({
@@ -46,7 +47,32 @@ export function Canvas({
   onApplyFix,
   onOpenMagicBox,
   onOpenTemplates,
+  onAddBlock,
 }: CanvasProps) {
+  const [isDragOver, setIsDragOver] = React.useState(false);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    if (!isDragOver) setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const blockId =
+      e.dataTransfer.getData("application/personaforge-block") ||
+      e.dataTransfer.getData("text/plain");
+    if (blockId) {
+      onAddBlock(blockId);
+    }
+  };
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -66,7 +92,24 @@ export function Canvas({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`flex-1 overflow-y-auto p-4 md:p-6 space-y-4 transition-all duration-200 ${
+        isDragOver
+          ? "bg-indigo-950/20 ring-2 ring-indigo-500/50 ring-inset"
+          : ""
+      }`}
+    >
+      {/* Drop Target Indicator when dragging from palette */}
+      {isDragOver && (
+        <div className="p-4 rounded-2xl border-2 border-dashed border-indigo-500 bg-indigo-500/15 shadow-glow flex items-center justify-center gap-2.5 text-indigo-300 font-semibold text-xs animate-pulse">
+          <Sparkles className="w-4 h-4 text-indigo-400 animate-spin" />
+          <span>Drop block here to add to Persona Canvas</span>
+        </div>
+      )}
+
       {/* Active Conflicts Summary Alert */}
       {conflicts.length > 0 && (
         <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs text-amber-200">
