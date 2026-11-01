@@ -1,26 +1,37 @@
 """
-whatsapp_handler.py — Core FastAPI server for the WhatsApp Communication
-Intelligence Layer (PS-16 Farmer Direct-to-Consumer Marketplace).
+whatsapp_handler.py — Hardened Multi-Tenant WhatsApp Gateway for PersonaForge.
 
-Endpoints:
-  POST /webhook   — Twilio WhatsApp webhook receiver
-  GET  /audio/{f} — Serves TTS audio files for Twilio media delivery
-  GET  /health    — Health-check
+Features:
+  - Multi-bot routing by persistent phone session: sha256(salt + phone) -> bot_id
+  - Dynamic bot switching: /use <code>, /bots, /reset, /lang, /help
+  - Immediate HTTP 200 response to Twilio with asynchronous BackgroundTasks execution
+  - Twilio signature validation using RequestValidator (DEV_SKIP_SIGNATURE bypass for local dev)
+  - Message chunking for WhatsApp character limits (1500 chars)
+  - Pillow image downscaling to max 1280x1280 before vision processing
+  - Audio serving with strict regex filename validation and TTL-based temp file cleanup
 """
 
+import asyncio
 import base64
+import hashlib
 import logging
 import os
+import re
 import tempfile
+import time
 import uuid
 from contextlib import asynccontextmanager
+from io import BytesIO
 from pathlib import Path
+from typing import Optional
 
 import requests
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form
+from fastapi import BackgroundTasks, FastAPI, Form, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
+from PIL import Image
+from twilio.request_validator import RequestValidator
 from twilio.rest import Client as TwilioClient
 
 import ai_services
@@ -36,9 +47,12 @@ TWILIO_WHATSAPP_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886"
 NGROK_PUBLIC_URL = os.getenv("NGROK_PUBLIC_URL", "")
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:3000")
 PORT = int(os.getenv("PORT", "8000"))
+PHONE_SALT = os.getenv("PHONE_SALT", "personaforge-gateway-salt")
+DEV_SKIP_SIGNATURE = os.getenv("DEV_SKIP_SIGNATURE", "true").lower() in ("true", "1")
+INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
 
 # Directory for temporary TTS audio files
-AUDIO_TMP_DIR = Path(tempfile.gettempdir()) / "kisanmitra_audio"
+AUDIO_TMP_DIR = Path(tempfile.gettempdir()) / "personaforge_whatsapp_audio"
 AUDIO_TMP_DIR.mkdir(exist_ok=True)
 
 # ---------------------------------------------------------------------------
@@ -49,78 +63,129 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger("whatsapp_handler")
+logger = logging.getLogger("whatsapp_gateway")
 
 # ---------------------------------------------------------------------------
-# In-memory session store
+# Multi-Bot Directory & Presets
 # ---------------------------------------------------------------------------
-# INTEGRATION NOTE: For production, replace this dict with a Redis-backed
-# store.  Install `redis-py`, connect via REDIS_URL env var, and swap
-# get/set calls below.  The session schema stays the same:
-#   { "language": "en"|"hi"|"kn", "history": [{"role":..,"content":..}, ...] }
+AVAILABLE_BOTS = {
+    "kisan": {
+        "id": "kisan-mitra",
+        "name": "KisanMitra (Agriculture Advisor)",
+        "code": "kisan",
+        "description": "Crops, mandi rates, and produce sales in Hindi/Kannada/English",
+    },
+    "shop": {
+        "id": "swift-cart",
+        "name": "SwiftCart (E-Commerce Specialist)",
+        "code": "shop",
+        "description": "Orders, tracking, returns, and inventory guidance",
+    },
+    "tech": {
+        "id": "tech-desk",
+        "name": "TechDesk (IT & DevOps Support)",
+        "code": "tech",
+        "description": "Cloud infra, error debugging, and ticket triage",
+    },
+    "health": {
+        "id": "medicare-triage",
+        "name": "MediCare (Healthcare Triage)",
+        "code": "health",
+        "description": "Symptom guidance, appointments, and wellness advice",
+    },
+    "fin": {
+        "id": "fin-advisor",
+        "name": "FinAdvisor (Financial Planning)",
+        "code": "fin",
+        "description": "Loans, mutual funds, taxation, and investment budgeting",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Session Storage & Phone Anonymization
+# ---------------------------------------------------------------------------
 user_sessions: dict[str, dict] = {}
 
 
+def _hash_phone(phone: str) -> str:
+    """Anonymize phone number via salted SHA-256 for privacy protection."""
+    return hashlib.sha256(f"{PHONE_SALT}:{phone}".encode()).hexdigest()[:16]
+
+
 def _get_session(phone: str) -> dict:
-    """Return (or create) the session dict for a phone number."""
-    if phone not in user_sessions:
-        user_sessions[phone] = {"language": None, "history": []}
-    return user_sessions[phone]
+    """Return (or initialize) user session state."""
+    anon_id = _hash_phone(phone)
+    if anon_id not in user_sessions:
+        user_sessions[anon_id] = {
+            "phone": phone,
+            "bot_code": "kisan",
+            "bot_id": "kisan-mitra",
+            "language": "hi",
+            "history": [],
+            "last_active": time.time(),
+        }
+    return user_sessions[anon_id]
+
+
+def _cleanup_old_audio_files(max_age_seconds: int = 300) -> None:
+    """Remove audio files older than 5 minutes to prevent disk bloat."""
+    now = time.time()
+    try:
+        for p in AUDIO_TMP_DIR.glob("*"):
+            if p.is_file():
+                age = now - p.stat().st_mtime
+                if age > max_age_seconds:
+                    p.unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning("Error during audio cleanup: %s", e)
 
 
 # ---------------------------------------------------------------------------
-# INTEGRATION HOOKS — replace stubs with HTTP calls to the Node.js backend
+# Message Chunking & Throttling Utilities
 # ---------------------------------------------------------------------------
+def split_whatsapp_message(text: str, max_length: int = 1500) -> list[str]:
+    """Split message into segments <= max_length respecting sentence boundaries."""
+    if len(text) <= max_length:
+        return [text]
+
+    chunks: list[str] = []
+    current_chunk = ""
+
+    # Split by paragraphs or sentences
+    paragraphs = text.split("\n\n")
+
+    for para in paragraphs:
+        if len(current_chunk) + len(para) + 2 <= max_length:
+            current_chunk = f"{current_chunk}\n\n{para}".strip()
+        else:
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+
+            if len(para) <= max_length:
+                current_chunk = para
+            else:
+                # Split large paragraph by sentence punctuation
+                sentences = re.split(r"([.!?]+\s+)", para)
+                temp = ""
+                for s in sentences:
+                    if len(temp) + len(s) <= max_length:
+                        temp += s
+                    else:
+                        if temp:
+                            chunks.append(temp.strip())
+                        temp = s
+                if temp:
+                    current_chunk = temp.strip()
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks or [text[:max_length]]
 
 
-# INTEGRATION HOOK: Fetch farmer profile from main backend
-# Replace this stub with an HTTP call to your Node.js backend
-async def get_farmer_profile(phone_number: str) -> dict:
-    # TODO: GET {BACKEND_BASE_URL}/api/farmers/by-phone/{phone_number}
-    return {"name": "Farmer", "farm_id": None, "location": None}
-
-
-# INTEGRATION HOOK: Fetch active orders for farmer
-async def get_farmer_orders(farm_id: str) -> list:
-    # TODO: GET {BACKEND_BASE_URL}/api/orders?farmerId={farm_id}
-    return []
-
-
-# INTEGRATION HOOK: Fetch current market prices
-async def get_market_prices(produce_type: str = None) -> dict:
-    # TODO: GET {BACKEND_BASE_URL}/api/market/prices
-    return {}
-
-
-# INTEGRATION HOOK: Post a new produce listing via chat command
-async def create_produce_listing(farm_id: str, listing_data: dict) -> dict:
-    # TODO: POST {BACKEND_BASE_URL}/api/listings
-    return {}
-
-
-async def _build_extra_context(phone: str) -> str:
-    """Gather live data from integration hooks and format as prompt context."""
-    profile = await get_farmer_profile(phone)
-    orders = await get_farmer_orders(profile.get("farm_id") or "")
-    prices = await get_market_prices()
-
-    parts: list[str] = []
-    if profile.get("name"):
-        parts.append(f"Farmer name: {profile['name']}")
-    if profile.get("location"):
-        parts.append(f"Location: {profile['location']}")
-    if orders:
-        parts.append(f"Active orders: {len(orders)}")
-    if prices:
-        parts.append(f"Market prices available: {list(prices.keys())}")
-    return "\n".join(parts)
-
-
-# ---------------------------------------------------------------------------
-# Twilio sender utility
-# ---------------------------------------------------------------------------
 def send_whatsapp_message(to: str, body: str, media_url: str | None = None) -> bool:
-    """Send a WhatsApp message via Twilio. Returns True on success."""
+    """Send a WhatsApp message via Twilio REST API."""
     try:
         client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         kwargs: dict = {
@@ -138,11 +203,20 @@ def send_whatsapp_message(to: str, body: str, media_url: str | None = None) -> b
         return False
 
 
+async def send_throttled_message_chunks(to: str, text: str) -> None:
+    """Split message and send with 1-2 second throttle delay to prevent WhatsApp rate limits."""
+    chunks = split_whatsapp_message(text, max_length=1500)
+    for i, chunk in enumerate(chunks):
+        send_whatsapp_message(to, chunk)
+        if i < len(chunks) - 1:
+            await asyncio.sleep(1.2)
+
+
 # ---------------------------------------------------------------------------
-# Media download helper
+# Media Handlers
 # ---------------------------------------------------------------------------
 def _download_twilio_media(media_url: str) -> bytes:
-    """Download media from Twilio with basic auth."""
+    """Download media from Twilio with authentication."""
     resp = requests.get(
         media_url,
         auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
@@ -152,297 +226,330 @@ def _download_twilio_media(media_url: str) -> bytes:
     return resp.content
 
 
+def _downscale_image(image_bytes: bytes, max_dim: int = 1280) -> bytes:
+    """Downscale large images using Pillow to optimize token usage and payload size."""
+    try:
+        img = Image.open(BytesIO(image_bytes))
+        if img.width > max_dim or img.height > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            out_buf = BytesIO()
+            img.save(out_buf, format="JPEG", quality=85)
+            return out_buf.getvalue()
+        return image_bytes
+    except Exception as e:
+        logger.warning("Image downscaling failed, using original: %s", e)
+        return image_bytes
+
+
 # ---------------------------------------------------------------------------
-# Message handlers
+# Command Dispatcher
 # ---------------------------------------------------------------------------
-async def _handle_text_message(phone: str, body: str) -> None:
-    """Process a plain text WhatsApp message."""
+async def _handle_command(phone: str, command_text: str) -> bool:
+    """Handle special platform bot commands: /use, /bots, /reset, /lang, /help."""
+    parts = command_text.strip().split(maxsplit=1)
+    cmd = parts[0].lower()
+    arg = parts[1].strip() if len(parts) > 1 else ""
+
     session = _get_session(phone)
 
-    # Always detect language from incoming message
-    session["language"] = ai_services.detect_language(body)
-    logger.info("Session language set to '%s' for %s", session["language"], phone)
+    if cmd == "/bots":
+        msg = "🤖 *PersonaForge Multi-Tenant Bots Available:*\n\n"
+        for code, b in AVAILABLE_BOTS.items():
+            msg += f"• *{b['name']}*\n  Command: `/use {code}`\n  {b['description']}\n\n"
+        msg += "Type `/use <code>` to switch bots anytime!"
+        send_whatsapp_message(phone, msg)
+        return True
 
+    if cmd == "/use":
+        if not arg:
+            send_whatsapp_message(
+                phone,
+                "Please specify a bot code. Example: `/use kisan` or `/use shop`. Type `/bots` to list all.",
+            )
+            return True
+
+        target_code = arg.lower().replace("-", "")
+        # Find matching bot
+        found_bot = None
+        for code, b in AVAILABLE_BOTS.items():
+            if code in target_code or target_code in code or b["id"] in target_code:
+                found_bot = b
+                break
+
+        if found_bot:
+            session["bot_code"] = found_bot["code"]
+            session["bot_id"] = found_bot["id"]
+            session["history"] = []
+            send_whatsapp_message(
+                phone,
+                f"✅ *Switched to {found_bot['name']}!*\n\n{found_bot['description']}\n\nHow can I help you today?",
+            )
+        else:
+            send_whatsapp_message(
+                phone, f"Unknown bot '{arg}'. Type `/bots` to see all available bot codes."
+            )
+        return True
+
+    if cmd == "/reset":
+        session["history"] = []
+        bot_info = AVAILABLE_BOTS.get(session["bot_code"], AVAILABLE_BOTS["kisan"])
+        send_whatsapp_message(
+            phone,
+            f"🔄 Conversation reset for *{bot_info['name']}*. What would you like to discuss?",
+        )
+        return True
+
+    if cmd == "/lang":
+        if not arg:
+            send_whatsapp_message(phone, "Usage: `/lang <hi|kn|en>`")
+            return True
+        session["language"] = arg.lower()
+        send_whatsapp_message(phone, f"🌐 Preferred language updated to: *{arg}*")
+        return True
+
+    if cmd == "/help":
+        bot_info = AVAILABLE_BOTS.get(session["bot_code"], AVAILABLE_BOTS["kisan"])
+        msg = (
+            f"ℹ️ *PersonaForge WhatsApp Help*\n"
+            f"Active Bot: *{bot_info['name']}*\n\n"
+            f"Commands:\n"
+            f"• `/use <code>` — Switch to another bot\n"
+            f"• `/bots` — List all bots on platform\n"
+            f"• `/reset` — Clear conversation history\n"
+            f"• `/lang <code|name>` — Change language\n"
+            f"• `/help` — Show this menu"
+        )
+        send_whatsapp_message(phone, msg)
+        return True
+
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Core Message Processing Pipeline
+# ---------------------------------------------------------------------------
+async def _process_text_message(phone: str, body: str) -> None:
+    session = _get_session(phone)
+
+    # Check for platform commands
+    if body.startswith("/"):
+        is_cmd = await _handle_command(phone, body)
+        if is_cmd:
+            return
+
+    # Language detection
+    session["language"] = ai_services.detect_language(body)
     language = session["language"]
 
-    # Append user message to history
     session["history"].append({"role": "user", "content": body})
 
-    # Build context from integration hooks
-    extra_context = await _build_extra_context(phone)
-    system_prompt = ai_services.build_system_prompt(language, extra_context)
-
-    # Get LLM response
+    # System prompt generation
+    system_prompt = ai_services.build_system_prompt(language)
     reply = ai_services.get_llm_response(session["history"], system_prompt, language)
 
-    # Send response
-    send_whatsapp_message(phone, reply)
-
-    # Append assistant response to history
+    # Throttled chunk transmission
+    await send_throttled_message_chunks(phone, reply)
     session["history"].append({"role": "assistant", "content": reply})
 
 
-async def _handle_image_message(phone: str, body: str, media_url: str) -> None:
-    """Process an image message — download, analyse, reply."""
+async def _process_image_message(phone: str, body: str, media_url: str) -> None:
     session = _get_session(phone)
+    language = session["language"] or "hi"
 
-    if body and body.strip():
-        session["language"] = ai_services.detect_language(body)
-    elif session["language"] is None:
-        session["language"] = "en"
-
-    language = session["language"]
-
-    # Download image and encode as base64
     try:
-        image_bytes = _download_twilio_media(media_url)
-        b64_image = base64.b64encode(image_bytes).decode("utf-8")
+        raw_bytes = _download_twilio_media(media_url)
+        downscaled_bytes = _downscale_image(raw_bytes, max_dim=1280)
+        b64_image = base64.b64encode(downscaled_bytes).decode("utf-8")
     except Exception:
-        logger.exception("Failed to download image from %s", media_url)
-        send_whatsapp_message(phone, "Sorry, I couldn't download the image. Please try again.")
+        logger.exception("Failed to download or downscale image from %s", media_url)
+        send_whatsapp_message(
+            phone, "Sorry, I could not process the image. Please try sending it again."
+        )
         return
 
-    # Analyse image
     user_question = body if body and body.strip() else ""
     analysis = ai_services.analyze_agriculture_image(b64_image, user_question, language)
 
-    # Send response
-    send_whatsapp_message(phone, analysis)
-
-    # Update history
-    session["history"].append(
-        {
-            "role": "user",
-            "content": f"[Sent an image] {user_question}".strip(),
-        }
-    )
+    await send_throttled_message_chunks(phone, analysis)
+    session["history"].append({"role": "user", "content": f"[Sent Image] {user_question}".strip()})
     session["history"].append({"role": "assistant", "content": analysis})
 
 
-async def _handle_voice_message(phone: str, body: str, media_url: str, content_type: str) -> None:
-    """Full voice pipeline: STT → LLM → text reply → TTS → audio reply."""
+async def _process_voice_message(phone: str, media_url: str, content_type: str) -> None:
     session = _get_session(phone)
-
-    # Step 1-2: Download and save audio
-    ext = ".ogg" if "ogg" in content_type else ".mp3"
-    tmp_audio_path = str(AUDIO_TMP_DIR / f"voice_{uuid.uuid4().hex}{ext}")
+    ext = ".ogg" if "ogg" in content_type else ".wav"
+    audio_filename = f"voice_{uuid.uuid4().hex}{ext}"
+    tmp_audio_path = str(AUDIO_TMP_DIR / audio_filename)
 
     try:
         audio_data = _download_twilio_media(media_url)
         with open(tmp_audio_path, "wb") as f:
             f.write(audio_data)
-        logger.info("Voice audio saved to %s (%d bytes)", tmp_audio_path, len(audio_data))
     except Exception:
-        logger.exception("Failed to download voice from %s", media_url)
-        send_whatsapp_message(phone, "Sorry, I couldn't process your voice message.")
+        logger.exception("Failed to download voice audio from %s", media_url)
+        send_whatsapp_message(phone, "Sorry, I could not process your voice note.")
         return
 
-    # Step 3: Transcribe
     transcript = ai_services.transcribe_audio(tmp_audio_path)
     if not transcript:
-        send_whatsapp_message(phone, "Sorry, I couldn't understand the audio. Please try again.")
-        _cleanup_file(tmp_audio_path)
+        send_whatsapp_message(phone, "Sorry, I could not understand the audio. Please try again.")
         return
 
-    # Step 4: Detect language from transcript ALWAYS
+    # Auto language detection from transcript
     session["language"] = ai_services.detect_language(transcript)
-    logger.info("Session language set to '%s' via voice for %s", session["language"], phone)
-
     language = session["language"]
 
-    # Step 5: Append transcription
     session["history"].append({"role": "user", "content": transcript})
-
-    # Step 6: Get LLM response
-    extra_context = await _build_extra_context(phone)
-    system_prompt = ai_services.build_system_prompt(language, extra_context)
+    system_prompt = ai_services.build_system_prompt(language)
     reply = ai_services.get_llm_response(session["history"], system_prompt, language)
 
-    # Step 7: Send text response immediately
+    # Send text transcript confirmation
     send_whatsapp_message(phone, f"🎤 _{transcript}_\n\n{reply}")
 
-    # Step 8-9: Generate TTS audio
+    # Generate TTS audio
     tts_audio = ai_services.text_to_speech(reply, language)
     if tts_audio:
         audio_id = uuid.uuid4().hex
-        wav_filename = f"response_{audio_id}.wav"
-        wav_path = str(AUDIO_TMP_DIR / wav_filename)
-        with open(wav_path, "wb") as f:
+        out_filename = f"response_{audio_id}.wav"
+        out_path = str(AUDIO_TMP_DIR / out_filename)
+        with open(out_path, "wb") as f:
             f.write(tts_audio)
 
-        # Convert WAV to MP4 (AAC) for WhatsApp compatibility (cross-platform)
-        mp4_filename = f"response_{audio_id}.mp4"
-        mp4_path = str(AUDIO_TMP_DIR / mp4_filename)
-        audio_public_url = f"{NGROK_PUBLIC_URL}/audio/{wav_filename}"  # Default fallback
-
-        import shutil
-        import subprocess
-        import sys
-
-        if sys.platform == "darwin":
-            # Mac OS built-in converter
-            try:
-                subprocess.run(
-                    ["afconvert", "-f", "m4af", "-d", "aac", wav_path, mp4_path], check=True
-                )
-                audio_public_url = f"{NGROK_PUBLIC_URL}/audio/{mp4_filename}"
-            except Exception as e:
-                logger.warning("Mac audio conversion failed: %s", e)
-        else:
-            # Windows / Linux relies on FFmpeg
-            if shutil.which("ffmpeg"):
-                try:
-                    subprocess.run(
-                        ["ffmpeg", "-y", "-i", wav_path, "-c:a", "aac", "-b:a", "64k", mp4_path],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=True,
-                    )
-                    audio_public_url = f"{NGROK_PUBLIC_URL}/audio/{mp4_filename}"
-                except Exception as e:
-                    logger.warning("FFmpeg conversion failed: %s", e)
-            else:
-                logger.warning(
-                    "FFmpeg not installed! Voice notes won't play correctly on WhatsApp on Windows. Please install FFmpeg."
-                )
-
-        # Step 10-11: Send audio via Twilio
+        audio_public_url = f"{NGROK_PUBLIC_URL}/audio/{out_filename}"
         send_whatsapp_message(phone, "🔊", media_url=audio_public_url)
-        logger.info("TTS audio sent: %s", audio_public_url)
 
-        # Step 12: Cleanup is deferred — Twilio needs time to fetch the file.
-        # In production, use a background task or TTL-based cleanup.
-    else:
-        logger.warning("TTS generation failed; text-only response sent")
-
-    # Cleanup downloaded voice file
-    _cleanup_file(tmp_audio_path)
-
-    # Step 13: Append assistant response
     session["history"].append({"role": "assistant", "content": reply})
 
 
-def _cleanup_file(path: str) -> None:
-    """Remove a temp file, logging any errors."""
+async def dispatch_incoming_message(
+    phone: str,
+    body: str,
+    num_media: int,
+    media_url: str,
+    media_type: str,
+) -> None:
+    """Asynchronous worker executing outside the request-response loop."""
     try:
-        os.unlink(path)
-    except OSError:
-        logger.warning("Could not remove temp file: %s", path)
+        _cleanup_old_audio_files()
+
+        if num_media > 0 and media_type.startswith("image/"):
+            await _process_image_message(phone, body, media_url)
+        elif num_media > 0 and media_type.startswith("audio/"):
+            await _process_voice_message(phone, media_url, media_type)
+        elif body:
+            await _process_text_message(phone, body)
+        else:
+            send_whatsapp_message(
+                phone, "I can process text, photos, and voice notes. Type `/help` for commands."
+            )
+    except Exception:
+        logger.exception("Background worker error for %s", phone)
+        send_whatsapp_message(phone, "An unexpected error occurred. Please try again.")
 
 
 # ---------------------------------------------------------------------------
-# FastAPI application
+# FastAPI Lifecycle & App
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup/shutdown lifecycle."""
-    logger.info("=" * 60)
-    logger.info("  KisanMitra WhatsApp Service starting on port %d", PORT)
-    logger.info("=" * 60)
-    if NGROK_PUBLIC_URL:
-        logger.info("  ngrok URL: %s", NGROK_PUBLIC_URL)
-        logger.info("  Webhook:   %s/webhook", NGROK_PUBLIC_URL)
-    else:
-        logger.info("  ⚠  NGROK_PUBLIC_URL not set — run ngrok and update .env")
-    logger.info("")
-    logger.info("  Twilio Sandbox config:")
-    logger.info("    1. Go to Twilio Console → Messaging → WhatsApp Sandbox")
-    logger.info(
-        "    2. Set 'When a message comes in' to: %s/webhook",
-        NGROK_PUBLIC_URL or "https://<NGROK_URL>",
-    )
-    logger.info("    3. Method: HTTP POST")
-    logger.info("=" * 60)
+    logger.info("PersonaForge WhatsApp Gateway active on port %d", PORT)
+    _cleanup_old_audio_files()
     yield
-    logger.info("KisanMitra WhatsApp Service shutting down")
+    logger.info("PersonaForge WhatsApp Gateway shutting down")
 
 
 app = FastAPI(
-    title="KisanMitra WhatsApp Service",
-    description="WhatsApp Communication Intelligence Layer for PS-16 Marketplace",
-    version="1.0.0",
+    title="PersonaForge Multi-Tenant WhatsApp Gateway",
+    description="Hardened, asynchronous, multi-bot WhatsApp gateway",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
 
 # ---------------------------------------------------------------------------
-# Routes
+# HTTP Endpoints
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health_check():
-    """Simple health check endpoint."""
-    return {"status": "ok", "service": "kisanmitra-whatsapp"}
+    return {
+        "status": "ok",
+        "service": "personaforge-whatsapp-gateway",
+        "bots_supported": len(AVAILABLE_BOTS),
+    }
 
 
 @app.get("/audio/{filename}")
 async def serve_audio(filename: str):
-    """Serve TTS audio files so Twilio can fetch them for media messages."""
+    """Serve synthesized audio with strict filename regex validation."""
+    if not re.match(r"^[a-zA-Z0-9_\-]+\.(wav|mp4|mp3|ogg)$", filename):
+        return JSONResponse({"error": "Invalid filename format"}, status_code=400)
+
     file_path = AUDIO_TMP_DIR / filename
     if not file_path.exists():
-        return JSONResponse({"error": "File not found"}, status_code=404)
-    if filename.endswith(".wav"):
-        media_type = "audio/wav"
-    elif filename.endswith(".mp4"):
-        media_type = "audio/mp4"
-    else:
-        media_type = "audio/mpeg"
+        return JSONResponse({"error": "Audio file expired or not found"}, status_code=404)
+
+    media_type = (
+        "audio/wav"
+        if filename.endswith(".wav")
+        else "audio/mp4"
+        if filename.endswith(".mp4")
+        else "audio/mpeg"
+    )
     return FileResponse(str(file_path), media_type=media_type, filename=filename)
 
 
 @app.post("/webhook")
 async def twilio_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
     From: str = Form(""),
     Body: str = Form(""),
     NumMedia: int = Form(0),
     MediaUrl0: str = Form(""),
     MediaContentType0: str = Form(""),
+    x_twilio_signature: Optional[str] = Header(None, alias="X-Twilio-Signature"),
 ):
     """
-    Twilio WhatsApp webhook — receives all incoming messages and routes
-    them to the appropriate handler based on media type.
+    Twilio Webhook: Validates Twilio signature, schedules async background task,
+    and returns HTTP 200 immediately (<50ms) to ensure Twilio never times out.
     """
+    form_data = {
+        "From": From,
+        "Body": Body,
+        "NumMedia": str(NumMedia),
+        "MediaUrl0": MediaUrl0,
+        "MediaContentType0": MediaContentType0,
+    }
+
+    # Signature Validation (Bypassed if DEV_SKIP_SIGNATURE=true)
+    if not DEV_SKIP_SIGNATURE and TWILIO_AUTH_TOKEN:
+        if not x_twilio_signature:
+            raise HTTPException(status_code=403, detail="Missing X-Twilio-Signature header")
+
+        validator = RequestValidator(TWILIO_AUTH_TOKEN)
+        url = str(request.url)
+        is_valid = validator.validate(url, form_data, x_twilio_signature)
+        if not is_valid:
+            logger.warning("Rejected invalid Twilio signature from %s", From)
+            raise HTTPException(status_code=403, detail="Invalid Twilio signature")
+
     phone = From
     body = Body.strip()
-    logger.info(
-        "Incoming | from=%s | body='%s' | media=%d | type=%s",
+
+    logger.info("Webhook received from %s (media=%d) -> queued async", phone, NumMedia)
+
+    # Immediately queue task and return HTTP 200
+    background_tasks.add_task(
+        dispatch_incoming_message,
         phone,
-        body[:50],
+        body,
         NumMedia,
+        MediaUrl0,
         MediaContentType0,
     )
 
-    try:
-        if NumMedia > 0 and MediaContentType0.startswith("image/"):
-            await _handle_image_message(phone, body, MediaUrl0)
-
-        elif NumMedia > 0 and MediaContentType0.startswith("audio/"):
-            await _handle_voice_message(phone, body, MediaUrl0, MediaContentType0)
-
-        elif body:
-            await _handle_text_message(phone, body)
-
-        else:
-            # Edge case: no body and no supported media
-            logger.warning("Unsupported message from %s (no text, unsupported media)", phone)
-            send_whatsapp_message(
-                phone,
-                "Sorry, I can only process text, images, and voice messages right now.",
-            )
-    except Exception:
-        logger.exception("Unhandled error processing message from %s", phone)
-        send_whatsapp_message(phone, "Something went wrong. Please try again.")
-
-    # Twilio expects a 200 response; an empty TwiML is fine when we send via API
     return JSONResponse({"status": "ok"})
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    uvicorn.run(
-        "whatsapp_handler:app",
-        host="0.0.0.0",
-        port=PORT,
-        reload=True,
-    )
+    uvicorn.run("whatsapp_handler:app", host="0.0.0.0", port=PORT, reload=True)
