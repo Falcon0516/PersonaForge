@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   BotConfig,
@@ -127,8 +127,13 @@ export default function BuilderPage() {
   );
 
   // Autosave debounced
+  const isInitialMount = useRef(true);
+
   useEffect(() => {
-    if (saveStatus !== "unsaved") return;
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
 
     setSaveStatus("saving");
     const timer = setTimeout(() => {
@@ -141,7 +146,7 @@ export default function BuilderPage() {
     }, 600);
 
     return () => clearTimeout(timer);
-  }, [config, botId, saveStatus]);
+  }, [config, botId]);
 
   // Undo / Redo
   const canUndo = historyIndex > 0;
