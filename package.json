@@ -1,0 +1,19 @@
+{
+  "name": "personaforge-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PersonaForge: The No-Code AI Persona and Voice Bot Studio",
+  "packageManager": "pnpm@12.4.2",
+  "scripts": {
+    "build": "pnpm --filter \"@personaforge/*\" build && pnpm --filter \"web\" build",
+    "test": "pnpm --filter \"@personaforge/core\" test",
+    "test:gateway": "services/whatsapp-gateway/.venv/bin/pytest",
+    "test:all": "pnpm --filter \"@personaforge/core\" test && services/whatsapp-gateway/.venv/bin/pytest",
+    "lint": "pnpm --recursive lint",
+    "typecheck": "pnpm --recursive typecheck",
+    "dev": "pnpm --filter \"web\" dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
