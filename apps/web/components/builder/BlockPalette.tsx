@@ -43,7 +43,7 @@ export function BlockPalette({
   }, [allBlocks, botMode, selectedCat, search]);
 
   return (
-    <div className="flex flex-col h-full bg-slate-950/60 border-r border-slate-800">
+    <div className="flex flex-col h-full bg-slate-950/60">
       {/* Palette Header */}
       <div className="p-4 border-b border-slate-800 space-y-3">
         <div className="flex items-center justify-between">

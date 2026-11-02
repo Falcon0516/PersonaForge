@@ -22,7 +22,16 @@ import { VersionDrawer } from "@/components/builder/VersionDrawer";
 import { CommandPalette } from "@/components/builder/CommandPalette";
 import { PublishModal } from "@/components/builder/PublishModal";
 import { OnboardingTour } from "@/components/builder/OnboardingTour";
+import { PanelResizeHandle } from "@/components/builder/PanelResizeHandle";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
+
+const DEFAULT_LEFT_WIDTH = 320;
+const DEFAULT_RIGHT_WIDTH = 440;
+const MIN_LEFT_WIDTH = 220;
+const MAX_LEFT_WIDTH = 620;
+const MIN_RIGHT_WIDTH = 320;
+const MAX_RIGHT_WIDTH = 880;
+const MIN_CENTER_WIDTH = 360;
 
 export default function BuilderPage() {
   const params = useParams();
@@ -89,6 +98,112 @@ export default function BuilderPage() {
       document.documentElement.classList.toggle("dark", theme === "dark");
     }
   }, [theme]);
+
+  // Draggable & resizable left/right panels
+  const [leftWidth, setLeftWidth] = useState<number>(DEFAULT_LEFT_WIDTH);
+  const [rightWidth, setRightWidth] = useState<number>(DEFAULT_RIGHT_WIDTH);
+
+  const leftWidthRef = useRef(leftWidth);
+  leftWidthRef.current = leftWidth;
+
+  const rightWidthRef = useRef(rightWidth);
+  rightWidthRef.current = rightWidth;
+
+  const startLeftWidthRef = useRef<number>(DEFAULT_LEFT_WIDTH);
+  const startRightWidthRef = useRef<number>(DEFAULT_RIGHT_WIDTH);
+
+  // Load saved panel widths from localStorage on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const savedLeft = localStorage.getItem("pf_builder_left_width");
+        if (savedLeft) {
+          const parsed = parseInt(savedLeft, 10);
+          if (!isNaN(parsed) && parsed >= MIN_LEFT_WIDTH && parsed <= MAX_LEFT_WIDTH) {
+            setLeftWidth(parsed);
+          }
+        }
+        const savedRight = localStorage.getItem("pf_builder_right_width");
+        if (savedRight) {
+          const parsed = parseInt(savedRight, 10);
+          if (!isNaN(parsed) && parsed >= MIN_RIGHT_WIDTH && parsed <= MAX_RIGHT_WIDTH) {
+            setRightWidth(parsed);
+          }
+        }
+      } catch {}
+    }
+  }, []);
+
+  // Left panel resize handlers
+  const handleLeftResizeStart = useCallback(() => {
+    startLeftWidthRef.current = leftWidthRef.current;
+  }, []);
+
+  const handleLeftResize = useCallback((deltaX: number) => {
+    const windowWidth = typeof window !== "undefined" ? window.innerWidth : 1440;
+    const maxAllowed = Math.min(
+      MAX_LEFT_WIDTH,
+      Math.max(MIN_LEFT_WIDTH, windowWidth - rightWidthRef.current - MIN_CENTER_WIDTH)
+    );
+    const target = Math.max(
+      MIN_LEFT_WIDTH,
+      Math.min(maxAllowed, startLeftWidthRef.current + deltaX)
+    );
+    setLeftWidth(target);
+  }, []);
+
+  const handleLeftResizeEnd = useCallback(() => {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("pf_builder_left_width", String(leftWidthRef.current));
+      } catch {}
+    }
+  }, []);
+
+  const handleResetLeft = useCallback(() => {
+    setLeftWidth(DEFAULT_LEFT_WIDTH);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("pf_builder_left_width", String(DEFAULT_LEFT_WIDTH));
+      } catch {}
+    }
+  }, []);
+
+  // Right panel resize handlers
+  const handleRightResizeStart = useCallback(() => {
+    startRightWidthRef.current = rightWidthRef.current;
+  }, []);
+
+  const handleRightResize = useCallback((deltaX: number) => {
+    const windowWidth = typeof window !== "undefined" ? window.innerWidth : 1440;
+    const maxAllowed = Math.min(
+      MAX_RIGHT_WIDTH,
+      Math.max(MIN_RIGHT_WIDTH, windowWidth - leftWidthRef.current - MIN_CENTER_WIDTH)
+    );
+    // Dragging to the left (negative deltaX) increases right panel width
+    const target = Math.max(
+      MIN_RIGHT_WIDTH,
+      Math.min(maxAllowed, startRightWidthRef.current - deltaX)
+    );
+    setRightWidth(target);
+  }, []);
+
+  const handleRightResizeEnd = useCallback(() => {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("pf_builder_right_width", String(rightWidthRef.current));
+      } catch {}
+    }
+  }, []);
+
+  const handleResetRight = useCallback(() => {
+    setRightWidth(DEFAULT_RIGHT_WIDTH);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("pf_builder_right_width", String(DEFAULT_RIGHT_WIDTH));
+      } catch {}
+    }
+  }, []);
 
   // Modals
   const [isMagicBoxOpen, setIsMagicBoxOpen] = useState(false);
@@ -354,14 +469,29 @@ export default function BuilderPage() {
 
       {/* Main 3-Pane Body */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Pane: Block Palette (320px) */}
-        <aside className="w-80 flex-shrink-0 hidden md:block border-r border-slate-800">
+        {/* Left Pane: Block Palette (Draggable / Resizable) */}
+        <aside
+          style={{ width: `${leftWidth}px` }}
+          className="flex-shrink-0 hidden md:block"
+        >
           <BlockPalette
             canvasBlockIds={blockOrder}
             botMode={config.mode}
             onAddBlock={handleAddBlock}
           />
         </aside>
+
+        {/* Left Resize Gutter */}
+        <PanelResizeHandle
+          direction="left"
+          currentWidth={leftWidth}
+          defaultWidth={DEFAULT_LEFT_WIDTH}
+          onResizeStart={handleLeftResizeStart}
+          onResize={handleLeftResize}
+          onResizeEnd={handleLeftResizeEnd}
+          onDoubleClick={handleResetLeft}
+          className="hidden md:flex"
+        />
 
         {/* Center Pane: Visual Canvas */}
         <main className="flex-1 flex flex-col min-w-0 bg-slate-950/40">
@@ -379,8 +509,23 @@ export default function BuilderPage() {
           />
         </main>
 
-        {/* Right Pane: Multi-Tab Inspector & Preview (440px) */}
-        <aside className="w-[440px] flex-shrink-0 hidden lg:block">
+        {/* Right Resize Gutter */}
+        <PanelResizeHandle
+          direction="right"
+          currentWidth={rightWidth}
+          defaultWidth={DEFAULT_RIGHT_WIDTH}
+          onResizeStart={handleRightResizeStart}
+          onResize={handleRightResize}
+          onResizeEnd={handleRightResizeEnd}
+          onDoubleClick={handleResetRight}
+          className="hidden lg:flex"
+        />
+
+        {/* Right Pane: Multi-Tab Inspector & Preview (Draggable / Resizable) */}
+        <aside
+          style={{ width: `${rightWidth}px` }}
+          className="flex-shrink-0 hidden lg:block"
+        >
           <RightPanel
             config={config}
             channel={activeChannel}

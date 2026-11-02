@@ -42,7 +42,7 @@ export function RightPanel({
       : "bg-rose-500/20 text-rose-300 border-rose-500/30";
 
   return (
-    <div className="flex flex-col h-full bg-slate-950/70 border-l border-slate-800">
+    <div className="flex flex-col h-full bg-slate-950/70">
       {/* Tab Switcher Header */}
       <div className="flex items-center justify-between p-2.5 border-b border-slate-800 bg-slate-900/60">
         <div className="flex items-center gap-1">
